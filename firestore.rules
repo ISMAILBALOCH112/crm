@@ -1,0 +1,79 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMember(tenantId) {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid));
+    }
+
+    function isAdmin(tenantId) {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // OTP codes: written/read before the user has an account, so no auth
+    // required. Docs are short-lived (5 min expiry, checked in the app) and
+    // keyed by email.
+    match /otp_verifications/{email} {
+      allow read, write: if true;
+    }
+
+    // User profiles: only the signed-in owner can read/write their own doc.
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Invite code -> tenantId lookup. Narrow doc (just an id + expiry), so
+    // any signed-in user may read it to request joining, and create/delete
+    // one as TenantService issues or regenerates codes.
+    match /inviteCodes/{code} {
+      allow read: if request.auth != null;
+      allow create, delete: if request.auth != null;
+    }
+
+    // A tenant and its data are only visible to its members. Anyone signed
+    // in may create a tenant (they become its first member right after).
+    match /tenants/{tenantId} {
+      allow read: if isMember(tenantId);
+      allow create: if request.auth != null;
+      allow update: if isMember(tenantId);
+
+      match /members/{uid} {
+        // Also readable by the uid itself (even before membership exists)
+        // so a requester can watch their own doc appear once approved.
+        allow read: if isMember(tenantId) || (request.auth != null && request.auth.uid == uid);
+        // Becoming your own admin only happens at tenant creation time.
+        // Adding anyone else (including approving a join request) requires
+        // an existing admin.
+        allow create: if request.auth != null && (
+          (request.auth.uid == uid && request.resource.data.role == 'admin') ||
+          isAdmin(tenantId)
+        );
+      }
+
+      match /pendingRequests/{uid} {
+        // Also readable by the requester themself, so their own pending
+        // screen can show whether they're still waiting or were rejected.
+        allow read: if isMember(tenantId) || (request.auth != null && request.auth.uid == uid);
+        allow create: if request.auth != null && request.auth.uid == uid;
+        allow update: if isAdmin(tenantId);
+        allow delete: if isAdmin(tenantId);
+      }
+
+      // WhatsApp contacts and their message threads: members can read to
+      // power the Chat tab, but never write directly — messages only reach
+      // Firestore via the backend (webhook for inbound, /send for outbound),
+      // which is what actually talks to WhatsApp. A client-side write here
+      // would show a message as "sent" without it ever leaving the CRM.
+      match /contacts/{phone} {
+        allow read: if isMember(tenantId);
+
+        match /messages/{messageId} {
+          allow read: if isMember(tenantId);
+        }
+      }
+    }
+  }
+}

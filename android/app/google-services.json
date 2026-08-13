@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "437445978681",
+    "firebase_url": "https://crmsetup-fb6f6-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "crmsetup-fb6f6",
+    "storage_bucket": "crmsetup-fb6f6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:437445978681:android:57ac9f58748f4835583be8",
+        "android_client_info": {
+          "package_name": "com.crm.crm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCveTOQO4SZjgV9dOtDohZP--HnlBQqd-g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
