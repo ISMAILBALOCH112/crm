@@ -10,7 +10,9 @@ import 'forgot_password_screen.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final bool showBack;
+
+  const LoginScreen({super.key, this.showBack = false});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -60,6 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
       icon: Icons.bolt_rounded,
       title: 'Welcome Back',
       subtitle: 'Sign in to continue',
+      showBack: widget.showBack,
       child: Form(
         key: _formKey,
         child: Column(

@@ -3,13 +3,6 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../theme/app_theme.dart';
 
-/// Shared shell for auth screens: soft canvas with glow blobs behind a
-/// gradient icon badge, bold title/subtitle, then the screen's own form
-/// content.
-///
-/// The icon/title/subtitle header collapses away while the keyboard is open
-/// so forms with several fields always have room to show their button above
-/// the keyboard instead of the two overlapping.
 class AuthScaffold extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -35,14 +28,14 @@ class AuthScaffold extends StatelessWidget {
       body: Stack(
         children: [
           Positioned(
-            top: -120,
-            right: -80,
-            child: _glow(280, AppColors.primary.withValues(alpha: 0.18)),
+            top: -100,
+            right: -70,
+            child: _glow(260, AppColors.accentPinkLight.withValues(alpha: 0.55)),
           ),
           Positioned(
-            bottom: -100,
-            left: -100,
-            child: _glow(240, AppColors.accent.withValues(alpha: 0.10)),
+            bottom: -80,
+            left: -80,
+            child: _glow(220, AppColors.accentWarm.withValues(alpha: 0.20)),
           ),
           SafeArea(
             child: SingleChildScrollView(
@@ -69,7 +62,7 @@ class AuthScaffold extends StatelessWidget {
                         ? const SizedBox(height: 12, width: double.infinity)
                         : Column(
                             children: [
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 8),
                               Center(
                                 child: Container(
                                   width: 68,
@@ -77,13 +70,7 @@ class AuthScaffold extends StatelessWidget {
                                   decoration: BoxDecoration(
                                     gradient: AppColors.primaryGradient,
                                     shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppColors.primary.withValues(alpha: 0.35),
-                                        blurRadius: 24,
-                                        offset: const Offset(0, 10),
-                                      ),
-                                    ],
+                                    boxShadow: AppColors.cardShadow(AppColors.primary),
                                   ),
                                   child: Icon(icon, color: Colors.white, size: 32),
                                 ).animate().scale(duration: 500.ms, curve: Curves.elasticOut),
@@ -98,18 +85,22 @@ class AuthScaffold extends StatelessWidget {
                                   fontWeight: FontWeight.w700,
                                   letterSpacing: -0.5,
                                 ),
-                              ).animate().fadeIn(delay: 120.ms, duration: 400.ms).slideY(begin: 0.15, end: 0, delay: 120.ms, duration: 400.ms),
+                              ).animate().fadeIn(delay: 120.ms, duration: 400.ms),
                               const SizedBox(height: 8),
                               Text(
                                 subtitle,
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 14.5),
                               ).animate().fadeIn(delay: 200.ms, duration: 400.ms),
-                              const SizedBox(height: 36),
+                              const SizedBox(height: 32),
                             ],
                           ),
                   ),
-                  child,
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: AppDecorations.glassCard(),
+                    child: child,
+                  ),
                 ],
               ),
             ),

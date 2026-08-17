@@ -30,6 +30,7 @@ class _ConnectWhatsappSheetState extends State<_ConnectWhatsappSheet> {
   final _phoneNumberIdController = TextEditingController();
   final _accessTokenController = TextEditingController();
   final _appSecretController = TextEditingController();
+  final _wabaIdController = TextEditingController();
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -39,6 +40,7 @@ class _ConnectWhatsappSheetState extends State<_ConnectWhatsappSheet> {
     _phoneNumberIdController.dispose();
     _accessTokenController.dispose();
     _appSecretController.dispose();
+    _wabaIdController.dispose();
     super.dispose();
   }
 
@@ -56,6 +58,7 @@ class _ConnectWhatsappSheetState extends State<_ConnectWhatsappSheet> {
         phoneNumberId: _phoneNumberIdController.text.trim(),
         accessToken: _accessTokenController.text.trim(),
         appSecret: _appSecretController.text.trim(),
+        wabaId: _wabaIdController.text.trim().isEmpty ? null : _wabaIdController.text.trim(),
       );
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -100,7 +103,7 @@ class _ConnectWhatsappSheetState extends State<_ConnectWhatsappSheet> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Paste the credentials from your Meta App (WhatsApp > API Setup).',
+                  'Paste the credentials from your Meta App (WhatsApp → API Setup).',
                   style: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.9), fontSize: 13),
                 ),
                 const SizedBox(height: 20),
@@ -122,6 +125,14 @@ class _ConnectWhatsappSheetState extends State<_ConnectWhatsappSheet> {
                   decoration: const InputDecoration(labelText: 'App Secret'),
                   obscureText: true,
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'App Secret is required' : null,
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _wabaIdController,
+                  decoration: const InputDecoration(
+                    labelText: 'WhatsApp Business Account ID (optional)',
+                    helperText: 'Needed for templates. Meta Business Suite → WhatsApp accounts.',
+                  ),
                 ),
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 14),
@@ -151,7 +162,7 @@ void _showFinishSetupDialog(BuildContext context, WhatsappConnectResult result) 
         children: [
           Text(
             '${result.phoneNumber} is verified. Now paste these into your Meta App Dashboard '
-            '(WhatsApp > Configuration > Webhook) to finish connecting it:',
+            '(WhatsApp → Configuration → Webhook) and subscribe to messages:',
             style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
           ),
           const SizedBox(height: 16),

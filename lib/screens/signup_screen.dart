@@ -1,14 +1,18 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
-import '../services/otp_service.dart';
+import '../services/auth_service.dart';
+import '../services/invite_session.dart';
+import '../services/tenant_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_scaffold.dart';
 import '../widgets/primary_button.dart';
-import 'otp_verification_screen.dart';
 
 class SignupScreen extends StatefulWidget {
-  const SignupScreen({super.key});
+  final String? inviteToken;
+
+  const SignupScreen({super.key, this.inviteToken});
 
   @override
   State<SignupScreen> createState() => _SignupScreenState();
@@ -21,11 +25,33 @@ class _SignupScreenState extends State<SignupScreen> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _otpService = OtpService();
+  final _inviteController = TextEditingController();
+  final _authService = AuthService();
+  final _tenantService = TenantService();
 
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
+
+  String? get _resolvedInviteToken {
+    final fromField = InviteSession.extractToken(_inviteController.text);
+    if (fromField != null) return fromField;
+    final fromWidget = InviteSession.extractToken(widget.inviteToken);
+    if (fromWidget != null) return fromWidget;
+    return InviteSession.extractToken(InviteSession.peek());
+  }
+
+  bool get _isInviteSignup => (_resolvedInviteToken ?? '').isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    final seed = widget.inviteToken ?? InviteSession.peek();
+    if (seed != null && seed.trim().isNotEmpty) {
+      _inviteController.text = seed.contains('://') ? seed : TenantService.inviteLinkUrl(seed.trim());
+    }
+    _inviteController.addListener(() => setState(() {}));
+  }
 
   @override
   void dispose() {
@@ -34,6 +60,7 @@ class _SignupScreenState extends State<SignupScreen> {
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _inviteController.dispose();
     super.dispose();
   }
 
@@ -46,22 +73,33 @@ class _SignupScreenState extends State<SignupScreen> {
     });
 
     final email = _emailController.text.trim();
+    final name = _nameController.text.trim();
+    final phone = _phoneController.text.trim();
+    final password = _passwordController.text;
+    final inviteToken = _resolvedInviteToken;
 
     try {
-      await _otpService.sendSignupOtp(email);
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => OtpVerificationScreen(
-            name: _nameController.text.trim(),
-            email: email,
-            phone: _phoneController.text.trim(),
-            password: _passwordController.text,
-          ),
-        ),
+      await _authService.createAccount(
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
       );
+
+      if (inviteToken != null && inviteToken.isNotEmpty) {
+        await _tenantService.acceptInviteLink(inviteToken);
+        InviteSession.take();
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } on FirebaseAuthException catch (e) {
+      setState(() => _errorMessage = _authService.messageForError(e));
     } catch (e) {
-      setState(() => _errorMessage = 'Could not send OTP. Please try again.');
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = msg.isNotEmpty ? msg : 'Could not create account. Please try again.';
+      });
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -77,13 +115,29 @@ class _SignupScreenState extends State<SignupScreen> {
     return AuthScaffold(
       icon: Icons.rocket_launch_rounded,
       title: 'Create Account',
-      subtitle: 'Get started with your CRM',
+      subtitle: _isInviteSignup ? 'Join the team with your invite link' : 'Create your WaTech account',
       showBack: true,
       child: Form(
         key: _formKey,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            _staggered(
+              TextFormField(
+                controller: _inviteController,
+                decoration: InputDecoration(
+                  labelText: 'Team invite link (optional)',
+                  hintText: 'Paste https://…/invite/… or watech://…',
+                  prefixIcon: const Icon(Icons.link_rounded),
+                  helperText: _isInviteSignup
+                      ? 'You will join the team right after signup'
+                      : 'Optional — paste invite if joining an existing team',
+                  helperMaxLines: 2,
+                ),
+              ),
+              0,
+            ),
+            const SizedBox(height: 14),
             _staggered(
               TextFormField(
                 controller: _nameController,
@@ -94,7 +148,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 validator: (value) =>
                     (value == null || value.trim().isEmpty) ? 'Name is required' : null,
               ),
-              0,
+              1,
             ),
             const SizedBox(height: 14),
             _staggered(
@@ -113,7 +167,7 @@ class _SignupScreenState extends State<SignupScreen> {
                   return null;
                 },
               ),
-              1,
+              2,
             ),
             const SizedBox(height: 14),
             _staggered(
@@ -127,7 +181,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 validator: (value) =>
                     (value == null || value.trim().isEmpty) ? 'Phone number is required' : null,
               ),
-              2,
+              3,
             ),
             const SizedBox(height: 14),
             _staggered(
@@ -151,7 +205,7 @@ class _SignupScreenState extends State<SignupScreen> {
                   return null;
                 },
               ),
-              3,
+              4,
             ),
             const SizedBox(height: 14),
             _staggered(
@@ -167,7 +221,7 @@ class _SignupScreenState extends State<SignupScreen> {
                   return null;
                 },
               ),
-              4,
+              5,
             ),
             if (_errorMessage != null) ...[
               const SizedBox(height: 14),
@@ -176,11 +230,11 @@ class _SignupScreenState extends State<SignupScreen> {
             const SizedBox(height: 24),
             _staggered(
               PrimaryButton(
-                label: 'Send OTP',
+                label: _isInviteSignup ? 'Create account & join' : 'Create account',
                 isLoading: _isLoading,
                 onPressed: _submit,
               ),
-              5,
+              6,
             ),
           ],
         ),

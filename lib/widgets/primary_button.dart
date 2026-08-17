@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// A gradient, glowing button that shrinks slightly on press and swaps its
-/// label for a spinner while [isLoading] is true.
 class PrimaryButton extends StatefulWidget {
   final String label;
   final bool isLoading;
@@ -44,37 +42,25 @@ class _PrimaryButtonState extends State<PrimaryButton> {
           height: 54,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            gradient: AppColors.primaryGradient,
-            boxShadow: disabled
-                ? []
-                : [
-                    BoxShadow(
-                      color: AppColors.primary.withValues(alpha: 0.4),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+            gradient: disabled ? null : AppColors.primaryGradient,
+            color: disabled ? AppColors.surfaceBorder : null,
+            boxShadow: disabled ? [] : AppColors.cardShadow(AppColors.primary),
           ),
           alignment: Alignment.center,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: widget.isLoading
-                ? const SizedBox(
-                    key: ValueKey('loading'),
-                    height: 22,
-                    width: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
-                  )
-                : Text(
-                    widget.label,
-                    key: const ValueKey('label'),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+          child: widget.isLoading
+              ? const SizedBox(
+                  height: 22,
+                  width: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
+                )
+              : Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: disabled ? AppColors.textSecondary : Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                   ),
-          ),
+                ),
         ),
       ),
     );

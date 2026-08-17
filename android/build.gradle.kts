@@ -19,6 +19,15 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Gradle 9.x: expose concurrent-futures on compile classpath for camera_android_camerax.
+subprojects {
+    pluginManager.withPlugin("com.android.library") {
+        if (name == "camera_android_camerax") {
+            dependencies.add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

@@ -13,6 +13,116 @@ service cloud.firestore {
         get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid)).data.role == 'admin';
     }
 
+    // Missing planExpiresAt = legacy tenant (allowed). Otherwise must be in the future.
+    function tenantPlanAllowsWrites(tenantId) {
+      let t = get(/databases/$(database)/documents/tenants/$(tenantId)).data;
+      return !('planExpiresAt' in t) || t.planExpiresAt > request.time;
+    }
+
+    // Keys the Flutter app may set when opening a new chat locally.
+    function clientContactCreateKeys() {
+      return ['name', 'lastMessageAt', 'unreadCount', 'isFavorite', 'isPinned', 'isArchived', 'isMuted', 'isGroup', 'lastReadAt', 'tags', 'city', 'notes', 'assigneeUid', 'assigneeName'];
+    }
+
+    // Keys members may change on an existing contact (read/mark/favorite/archive/name).
+    function clientContactUpdateKeys() {
+      return ['name', 'unreadCount', 'lastReadAt', 'isFavorite', 'isPinned', 'isArchived', 'isMuted', 'tags', 'city', 'notes', 'assigneeUid', 'assigneeName'];
+    }
+
+    function isValidClientContactCreate() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(clientContactCreateKeys())
+        && data.get('unreadCount', 0) == 0
+        && data.get('isFavorite', false) == false
+        && data.get('isPinned', false) == false
+        && data.get('isArchived', false) == false
+        && data.get('isMuted', false) == false
+        && data.get('isGroup', false) == false;
+    }
+
+    function isValidClientContactUpdate() {
+      let diff = request.resource.data.diff(resource.data);
+      return diff.affectedKeys().hasOnly(clientContactUpdateKeys())
+        && (!diff.affectedKeys().hasAny(['unreadCount'])
+            || request.resource.data.unreadCount == 0)
+        && (!diff.affectedKeys().hasAny(['isFavorite'])
+            || request.resource.data.isFavorite is bool)
+        && (!diff.affectedKeys().hasAny(['isPinned'])
+            || request.resource.data.isPinned is bool)
+        && (!diff.affectedKeys().hasAny(['isArchived'])
+            || request.resource.data.isArchived is bool)
+        && (!diff.affectedKeys().hasAny(['isMuted'])
+            || request.resource.data.isMuted is bool)
+        && (!diff.affectedKeys().hasAny(['name'])
+            || request.resource.data.name is string)
+        && (!diff.affectedKeys().hasAny(['tags'])
+            || request.resource.data.tags is list)
+        && (!diff.affectedKeys().hasAny(['city'])
+            || request.resource.data.city == null
+            || request.resource.data.city is string)
+        && (!diff.affectedKeys().hasAny(['notes'])
+            || request.resource.data.notes == null
+            || request.resource.data.notes is string)
+        && (!diff.affectedKeys().hasAny(['assigneeUid'])
+            || request.resource.data.assigneeUid == null
+            || request.resource.data.assigneeUid is string)
+        && (!diff.affectedKeys().hasAny(['assigneeName'])
+            || request.resource.data.assigneeName == null
+            || request.resource.data.assigneeName is string);
+    }
+
+    function isValidOrderCreate() {
+      let data = request.resource.data;
+      return data.keys().hasAll([
+            'orderNumber', 'customerPhone', 'customerName', 'items',
+            'totalAmount', 'status', 'createdBy'
+          ])
+        && data.orderNumber is number
+        && data.customerPhone is string
+        && data.customerName is string
+        && data.items is list
+        && data.items.size() > 0
+        && data.status == 'pending'
+        && data.createdBy == request.auth.uid
+        && data.totalAmount is number
+        && data.totalAmount >= 0
+        && (!('notes' in data) || data.notes == null || data.notes is string)
+        && (!('orderCode' in data) || data.orderCode is string)
+        && (!('trackingNumber' in data) || data.trackingNumber is string)
+        && (!('courier' in data) || data.courier is string)
+        && (!('city' in data) || data.city == null || data.city is string)
+        && (!('address' in data) || data.address == null || data.address is string)
+        && (!('createdAt' in data) || data.createdAt is timestamp)
+        && (!('updatedAt' in data) || data.updatedAt is timestamp)
+        && (!('paymentStatus' in data) || data.paymentStatus in ['unpaid', 'partial', 'paid'])
+        && (!('paymentMethod' in data) || data.paymentMethod in ['cod', 'jazzcash', 'easypaisa'])
+        && (!('paidAmount' in data) || (data.paidAmount is number && data.paidAmount >= 0))
+        && (!('whatsappConfirmStatus' in data) || data.whatsappConfirmStatus is string)
+        && (!('whatsappConfirmDueAt' in data) || data.whatsappConfirmDueAt is timestamp)
+        && (!('whatsappConfirmDelayMinutes' in data) || data.whatsappConfirmDelayMinutes is number);
+    }
+
+    function isValidOrderUpdate() {
+      let diff = request.resource.data.diff(resource.data);
+      return diff.affectedKeys().hasOnly([
+            'customerPhone', 'customerName', 'items', 'totalAmount',
+            'status', 'notes', 'updatedAt', 'trackingNumber', 'courier', 'city', 'address',
+            'paymentStatus', 'paidAmount', 'paymentMethod', 'courierStatus',
+            'whatsappConfirmStatus'
+          ])
+        && !diff.affectedKeys().hasAny(['orderNumber', 'orderCode', 'createdBy', 'createdAt'])
+        && request.resource.data.status in [
+            'pending', 'confirmed', 'shipped', 'delivered', 'returned', 'cancelled'
+          ]
+        && (!('paymentStatus' in request.resource.data)
+            || request.resource.data.paymentStatus in ['unpaid', 'partial', 'paid'])
+        && (!('paymentMethod' in request.resource.data)
+            || request.resource.data.paymentMethod in ['cod', 'jazzcash', 'easypaisa'])
+        && (!('paidAmount' in request.resource.data)
+            || (request.resource.data.paidAmount is number
+                && request.resource.data.paidAmount >= 0));
+    }
+
     // OTP codes: written/read before the user has an account, so no auth
     // required. Docs are short-lived (5 min expiry, checked in the app) and
     // keyed by email.
@@ -20,37 +130,80 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // User profiles: only the signed-in owner can read/write their own doc.
+    // User profiles: owner full access; admin may clear another member's tenantId on remove.
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update: if request.auth != null && (
+        request.auth.uid == uid ||
+        (
+          resource.data.tenantId is string
+          && isAdmin(resource.data.tenantId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tenantId', 'pendingTenantId'])
+          && !('tenantId' in request.resource.data)
+        )
+      );
+      allow delete: if false;
     }
 
-    // Invite code -> tenantId lookup. Narrow doc (just an id + expiry), so
-    // any signed-in user may read it to request joining, and create/delete
-    // one as TenantService issues or regenerates codes.
+    // Invite code -> tenantId lookup.
     match /inviteCodes/{code} {
       allow read: if request.auth != null;
-      allow create, delete: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.tenantId is string
+        && isAdmin(request.resource.data.tenantId);
+      allow delete: if request.auth != null
+        && resource.data.tenantId is string
+        && isAdmin(resource.data.tenantId);
+    }
+
+    // Invite link token -> tenantId (shareable watech://invite/<token>).
+    match /inviteLinks/{token} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.tenantId is string
+        && isAdmin(request.resource.data.tenantId);
+      allow delete: if request.auth != null
+        && resource.data.tenantId is string
+        && isAdmin(resource.data.tenantId);
     }
 
     // A tenant and its data are only visible to its members. Anyone signed
     // in may create a tenant (they become its first member right after).
+    // Plan/billing fields are set on create (trial) or only by backend Admin SDK.
     match /tenants/{tenantId} {
       allow read: if isMember(tenantId);
-      allow create: if request.auth != null;
-      allow update: if isMember(tenantId);
+      allow create: if request.auth != null
+        && request.resource.data.planId == 'trial_7'
+        && request.resource.data.planStatus == 'active'
+        && request.resource.data.planExpiresAt is timestamp;
+      allow update: if isAdmin(tenantId)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'planId', 'planStatus', 'planExpiresAt', 'planActivatedAt', 'lastLicenseKeyId'
+        ]);
 
       match /members/{uid} {
         // Also readable by the uid itself (even before membership exists)
         // so a requester can watch their own doc appear once approved.
         allow read: if isMember(tenantId) || (request.auth != null && request.auth.uid == uid);
-        // Becoming your own admin only happens at tenant creation time.
-        // Adding anyone else (including approving a join request) requires
-        // an existing admin.
+        // Admin at create; admin adds others; invite-link agent self-join
+        // when inviteToken matches a valid inviteLinks doc for this tenant.
         allow create: if request.auth != null && (
           (request.auth.uid == uid && request.resource.data.role == 'admin') ||
-          isAdmin(tenantId)
+          isAdmin(tenantId) ||
+          (
+            request.auth.uid == uid
+            && request.resource.data.role == 'agent'
+            && request.resource.data.inviteToken is string
+            && exists(/databases/$(database)/documents/inviteLinks/$(request.resource.data.inviteToken))
+            && get(/databases/$(database)/documents/inviteLinks/$(request.resource.data.inviteToken)).data.tenantId == tenantId
+            && get(/databases/$(database)/documents/inviteLinks/$(request.resource.data.inviteToken)).data.expiresAt > request.time
+          )
         );
+        allow update: if isAdmin(tenantId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+          && request.resource.data.role in ['admin', 'agent'];
+        allow delete: if isAdmin(tenantId);
       }
 
       match /pendingRequests/{uid} {
@@ -62,18 +215,91 @@ service cloud.firestore {
         allow delete: if isAdmin(tenantId);
       }
 
-      // WhatsApp contacts and their message threads: members can read to
-      // power the Chat tab, but never write directly — messages only reach
-      // Firestore via the backend (webhook for inbound, /send for outbound),
-      // which is what actually talks to WhatsApp. A client-side write here
-      // would show a message as "sent" without it ever leaving the CRM.
+      // WhatsApp contacts: members read for the Chat tab. Message subdocs are
+      // backend-only (webhook + /send). Members may create/update a contact
+      // only for UI state the app owns — never for message content or counts
+      // the backend increments on inbound WhatsApp traffic.
       match /contacts/{phone} {
         allow read: if isMember(tenantId);
+        allow create: if isMember(tenantId) && isValidClientContactCreate();
+        allow update: if isMember(tenantId) && isValidClientContactUpdate();
+        allow delete: if false;
 
         match /messages/{messageId} {
           allow read: if isMember(tenantId);
+          // Soft-delete / star / reaction — members only; never change message body.
+          allow update: if isMember(tenantId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'deleted', 'deletedAt', 'starred',
+              'localReaction', 'reaction', 'reactionBy', 'reactionAt', 'customerReaction',
+              'reactionMetaSynced'
+            ]);
+          allow create, delete: if false;
         }
       }
+
+      // Orders: members create/update; only admins may delete.
+      match /orders/{orderId} {
+        allow read: if isMember(tenantId);
+        allow create: if isMember(tenantId) && isValidOrderCreate() && tenantPlanAllowsWrites(tenantId);
+        allow update: if isMember(tenantId) && isValidOrderUpdate();
+        allow delete: if isAdmin(tenantId);
+      }
+
+      // Product catalog — everyone can browse; admins manage stock.
+      match /products/{productId} {
+        allow read: if isMember(tenantId);
+        allow create, update, delete: if isAdmin(tenantId);
+      }
+
+      match /meta/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if isMember(tenantId) && docId == 'orderCounter';
+      }
+
+      // Bot settings — admins configure, all members can read status.
+      match /bot/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if isAdmin(tenantId);
+      }
+
+      match /settings/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if isAdmin(tenantId);
+      }
+
+      match /broadcasts/{broadcastId} {
+        allow read: if isMember(tenantId);
+        allow write: if false;
+      }
+
+      match /contacts/{phone}/meta/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if false;
+      }
+    }
+
+    // Platform license keys — backend Admin SDK only.
+    match /licenseKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    // Platform owners who can generate license keys — backend only write;
+    // signed-in user may read their own doc to show Platform UI.
+    match /platformAdmins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    function isPlatformAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/platformAdmins/$(request.auth.uid));
+    }
+
+    // Public payment guide (JazzCash / prices). Editable by platform admins only.
+    match /platform/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isPlatformAdmin();
     }
   }
 }

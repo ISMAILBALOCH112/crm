@@ -46,3 +46,8 @@ app.*.map.json
 
 # Machine-specific local SDK paths, not shared config
 /android/local.properties
+
+# Local adb/device debug captures
+device_screenshot.png
+device_ui*.xml
+our_chat.png

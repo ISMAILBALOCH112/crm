@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import '../services/tenant_service.dart';
 import '../theme/app_theme.dart';
 import 'business_setup_screen.dart';
+import 'get_started_screen.dart';
 import 'home_screen.dart';
-import 'login_screen.dart';
 import 'pending_approval_screen.dart';
 
 /// Root screen. Streams both auth state and tenant status, so the UI swaps
@@ -23,7 +23,7 @@ class AuthGate extends StatelessWidget {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const _LoadingScaffold();
         }
-        return snapshot.hasData ? const _TenantGate() : const LoginScreen();
+        return snapshot.hasData ? const _TenantGate() : const GetStartedScreen();
       },
     );
   }

@@ -84,10 +84,16 @@ void showWhatsappVerifiedDetails(
                   children: [
                     Row(
                       children: [
-                        Text(
-                          verifiedName?.isNotEmpty == true ? verifiedName! : 'WhatsApp Business',
-                          style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 17),
-                          overflow: TextOverflow.ellipsis,
+                        Flexible(
+                          child: Text(
+                            verifiedName?.isNotEmpty == true ? verifiedName! : 'WhatsApp Business',
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 17,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         if (isVerified) ...[const SizedBox(width: 6), const VerifiedBadge(size: 16)],
                       ],
@@ -112,7 +118,8 @@ void showWhatsappVerifiedDetails(
           _DetailRow(label: 'Messaging quality', value: quality.label, dotColor: quality.color),
           const SizedBox(height: 20),
           Text(
-            'Pulled live from Meta\'s WhatsApp Cloud API when this number was connected.',
+            'Pulled from Meta WhatsApp Cloud API when this number was connected. '
+            'Inbound chats need webhook field “messages” subscribed.',
             style: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.7), fontSize: 11.5),
           ),
         ],

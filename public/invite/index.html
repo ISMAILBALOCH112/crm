@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WaTech Invite</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0b141a; color: #e9edef; display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; padding: 24px; }
+    .card { max-width: 420px; background: #1f2c34; border-radius: 16px; padding: 28px; text-align: center; }
+    a.btn { display: inline-block; margin-top: 18px; background: #25d366; color: #111; text-decoration: none; font-weight: 700; padding: 12px 20px; border-radius: 24px; }
+    code { word-break: break-all; color: #8696a0; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Join team on WaTech</h1>
+    <p>Opening the app… If nothing happens, tap the button below.</p>
+    <p><code id="link"></code></p>
+    <a class="btn" id="open" href="#">Open WaTech</a>
+  </div>
+  <script>
+    (function () {
+      var parts = location.pathname.split('/').filter(Boolean);
+      var token = parts[parts.length - 1] || '';
+      if (token === 'invite') token = '';
+      var app = token ? ('watech://invite/' + token) : 'watech://invite';
+      document.getElementById('link').textContent = app;
+      document.getElementById('open').href = app;
+      if (token) location.replace(app);
+    })();
+  </script>
+</body>
+</html>

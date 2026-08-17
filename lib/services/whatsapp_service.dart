@@ -10,7 +10,11 @@ class WhatsappConnectResult {
   final String webhookUrl;
   final String verifyToken;
 
-  WhatsappConnectResult({required this.phoneNumber, required this.webhookUrl, required this.verifyToken});
+  WhatsappConnectResult({
+    required this.phoneNumber,
+    required this.webhookUrl,
+    required this.verifyToken,
+  });
 }
 
 class WhatsappService {
@@ -23,17 +27,22 @@ class WhatsappService {
     required String phoneNumberId,
     required String accessToken,
     required String appSecret,
+    String? wabaId,
   }) async {
     final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
+
+    final body = <String, dynamic>{
+      'phoneNumberId': phoneNumberId,
+      'accessToken': accessToken,
+      'appSecret': appSecret,
+    };
+    final waba = wabaId?.trim();
+    if (waba != null && waba.isNotEmpty) body['wabaId'] = waba;
 
     final response = await http.post(
       Uri.parse('$backendBaseUrl/tenants/$tenantId/whatsapp/connect'),
       headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'},
-      body: jsonEncode({
-        'phoneNumberId': phoneNumberId,
-        'accessToken': accessToken,
-        'appSecret': appSecret,
-      }),
+      body: jsonEncode(body),
     );
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -47,4 +56,5 @@ class WhatsappService {
       verifyToken: data['verifyToken'] as String,
     );
   }
+
 }

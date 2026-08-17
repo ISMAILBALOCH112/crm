@@ -1,1 +1,32 @@
-{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"flutter":{"platforms":{"android":{"default":{"projectId":"crmsetup-fb6f6","appId":"1:437445978681:android:57ac9f58748f4835583be8","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"crmsetup-fb6f6","configurations":{"android":"1:437445978681:android:57ac9f58748f4835583be8"}}}}}}
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/invite/**", "destination": "/invite/index.html" }
+    ]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "crmsetup-fb6f6",
+          "appId": "1:437445978681:android:57ac9f58748f4835583be8",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "crmsetup-fb6f6",
+          "configurations": {
+            "android": "1:437445978681:android:57ac9f58748f4835583be8"
+          }
+        }
+      }
+    }
+  }
+}
