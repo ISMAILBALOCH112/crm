@@ -15,6 +15,8 @@ class SharedReplayStream<T> {
   T? _latest;
   bool _hasLatest = false;
 
+  T? get peekLatest => _hasLatest ? _latest : null;
+
   Stream<T> get stream {
     _controller ??= StreamController<T>.broadcast(
       onListen: _onListen,

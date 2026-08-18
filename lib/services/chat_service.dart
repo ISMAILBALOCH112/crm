@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../config/backend_config.dart';
 import 'chat_media_cache.dart';
+import 'conversation_message_cache.dart';
 import 'media_upload_service.dart';
 import 'shared_replay_stream.dart';
 
@@ -145,7 +146,11 @@ class ChatService {
             .collection('messages')
             .orderBy('timestamp', descending: true)
             .limit(80)
-            .snapshots(),
+            .snapshots()
+            .map((snapshot) {
+              ConversationMessageCache.putFromSnapshot(tenantId, phone, snapshot);
+              return snapshot;
+            }),
       ),
     );
     return cached.stream;
@@ -155,15 +160,19 @@ class ChatService {
   /// writes the resulting message to Firestore) rather than writing to
   /// Firestore directly â€” the client has no way to make a message really
   /// leave WhatsApp, so it must never fake that locally.
-  Future<void> sendMessage({
+  Future<Map<String, dynamic>> sendMessage({
     required String tenantId,
     required String to,
     required String text,
     String? replyToMessageId,
+    String? clientMessageId,
   }) {
     final body = <String, dynamic>{'to': to, 'text': text};
     if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty) {
       body['replyToMessageId'] = replyToMessageId.trim();
+    }
+    if (clientMessageId != null && clientMessageId.trim().isNotEmpty) {
+      body['clientMessageId'] = clientMessageId.trim();
     }
     return _postSend(tenantId: tenantId, body: body);
   }

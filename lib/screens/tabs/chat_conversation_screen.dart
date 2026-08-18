@@ -21,7 +21,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/cloudinary_config.dart';
 import '../../data/chat_gif_sticker_data.dart';
+import '../../models/conversation_message.dart';
 import '../../services/chat_service.dart';
+import '../../services/conversation_message_cache.dart';
 import '../../services/subscription_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/chat_ad_referral_card.dart';
@@ -79,6 +81,7 @@ class _WaColors {
 
 class _PendingOutbound {
   final String id;
+  final String? clientMessageId;
   final String type;
   final String text;
   final DateTime at;
@@ -86,9 +89,12 @@ class _PendingOutbound {
   final String? localPath;
   Uint8List? bytes;
   String? remoteUrl;
+  String? sendStatus;
+  Map<String, dynamic>? retryPayload;
 
   _PendingOutbound({
     required this.id,
+    this.clientMessageId,
     this.type = 'text',
     required this.text,
     required this.at,
@@ -203,7 +209,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   final Set<String> _selectedIds = {};
   bool _didInitialJump = false;
   Map<String, dynamic>? _replyTo;
-  List<QueryDocumentSnapshot<Map<String, dynamic>>> _latestDocs = const [];
+  List<ConversationMessage> _latestDocs = const [];
   final List<_PendingOutbound> _pending = [];
   DateTime? _lastCustomerMessageAt;
   String? _lastListDocId;
@@ -221,6 +227,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   String? _assigneeUid;
   String? _assigneeName;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _contactSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _messagesSub;
 
   bool get _selecting => _selectedIds.isNotEmpty;
 
@@ -281,7 +288,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     bool currently = false;
     for (final d in _latestDocs) {
       if (d.id == id) {
-        currently = d.data()['starred'] == true;
+        currently = d.data['starred'] == true;
         break;
       }
     }
@@ -579,10 +586,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     }
   }
 
-  void _replySelected(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+  void _replySelected(List<ConversationMessage> docs) {
     if (_selectedIds.length != 1) return;
     final id = _selectedIds.first;
-    QueryDocumentSnapshot<Map<String, dynamic>>? doc;
+    ConversationMessage? doc;
     for (final d in docs) {
       if (d.id == id) {
         doc = d;
@@ -590,7 +597,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       }
     }
     if (doc == null) return;
-    final data = doc.data();
+    final data = doc.data;
     setState(() {
       _replyTo = {
         'id': id,
@@ -609,11 +616,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _focusNode.requestFocus();
   }
 
-  Future<void> _shareSelected(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) async {
+  Future<void> _shareSelected(List<ConversationMessage> docs) async {
     final textParts = <String>[];
     final files = <XFile>[];
     for (final id in _selectedIds) {
-      QueryDocumentSnapshot<Map<String, dynamic>>? doc;
+      ConversationMessage? doc;
       for (final d in docs) {
         if (d.id == id) {
           doc = d;
@@ -621,7 +628,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         }
       }
       if (doc == null) continue;
-      final data = doc.data();
+      final data = doc.data;
       final t = (data['text'] as String?)?.trim();
       if (t != null && t.isNotEmpty) textParts.add(t);
       final url = (data['imageUrl'] as String?)?.trim() ??
@@ -663,12 +670,12 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _clearSelection();
   }
 
-  Future<void> _forwardSelected(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) async {
+  Future<void> _forwardSelected(List<ConversationMessage> docs) async {
     final payloads = <Map<String, dynamic>>[];
     for (final id in _selectedIds) {
       for (final d in docs) {
         if (d.id == id) {
-          payloads.add(d.data());
+          payloads.add(d.data);
           break;
         }
       }
@@ -710,11 +717,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     }
   }
 
-  void _maybeSetUnreadSeparator(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+  void _maybeSetUnreadSeparator(List<ConversationMessage> docs) {
     if (_unreadSeparatorReady || _initialUnreadCount <= 0 || docs.isEmpty) return;
     final inbound = <String>[];
     for (var i = 0; i < docs.length && inbound.length < _initialUnreadCount; i++) {
-      if (docs[i].data()['direction'] == 'inbound') {
+      if (docs[i].data['direction'] == 'inbound') {
         inbound.add(docs[i].id);
       }
     }
@@ -724,6 +731,262 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     }
     _firstUnreadId = inbound.last;
     _unreadSeparatorReady = true;
+  }
+
+  List<ConversationMessage> _filterMessageDocs(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+  ) {
+    return snapshot.docs
+        .where((d) => d.data()['deleted'] != true)
+        .map((d) => ConversationMessage(id: d.id, data: Map<String, dynamic>.from(d.data())))
+        .toList();
+  }
+
+  bool _messageDocsChanged(List<ConversationMessage> next) {
+    if (_latestDocs.length != next.length) return true;
+    for (var i = 0; i < next.length; i++) {
+      if (_latestDocs[i].id != next[i].id) return true;
+      final prev = _latestDocs[i].data;
+      final cur = next[i].data;
+      if (prev['status'] != cur['status']) return true;
+      if (prev['text'] != cur['text']) return true;
+      if (prev['starred'] != cur['starred']) return true;
+      if (prev['reaction'] != cur['reaction']) return true;
+      if (prev['localReaction'] != cur['localReaction']) return true;
+      if (prev['customerReaction'] != cur['customerReaction']) return true;
+    }
+    return false;
+  }
+
+  void _scheduleMessageScroll(List<ConversationMessage> docs) {
+    final pending = List<_PendingOutbound>.from(_pending);
+    final newestId = pending.isNotEmpty
+        ? pending.last.id
+        : (docs.isNotEmpty ? docs.first.id : null);
+    final isNew = newestId != _lastListDocId;
+    _lastListDocId = newestId;
+
+    final q = _searchQuery.toLowerCase();
+    final searching = _searchOpen && q.isNotEmpty;
+
+    if (!_didInitialJump && (docs.isNotEmpty || pending.isNotEmpty)) {
+      _didInitialJump = true;
+      WidgetsBinding.instance.addPostFrameCallback(_scrollToEnd);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future<void>.delayed(const Duration(milliseconds: 80), () {
+          if (mounted) _scrollToEnd();
+        });
+      });
+    } else if (isNew && !searching && !_searchOpen && !_selecting && _isPinnedToLatest()) {
+      WidgetsBinding.instance.addPostFrameCallback(_scrollToEnd);
+    }
+  }
+
+  void _applyMessagesSnapshot(
+    QuerySnapshot<Map<String, dynamic>> snapshot, {
+    required bool notify,
+  }) {
+    final docs = _filterMessageDocs(snapshot);
+    final pendingBefore = _pending.length;
+    _prunePending(docs);
+    final pruned = _pending.length != pendingBefore;
+    _maybeSetUnreadSeparator(docs);
+
+    final docsChanged = !_messagesSnapReady || _messageDocsChanged(docs);
+    if (!docsChanged && !pruned) return;
+
+    _scheduleMessageScroll(docs);
+
+    if (notify && mounted) {
+      setState(() {
+        _latestDocs = docs;
+        _messagesSnapReady = true;
+      });
+    } else {
+      _latestDocs = docs;
+      _messagesSnapReady = true;
+    }
+  }
+
+  void _onMessagesSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    if (!mounted) return;
+    _applyMessagesSnapshot(snapshot, notify: true);
+  }
+
+  Widget _buildMessagesBody() {
+    final docs = _latestDocs;
+    final pending = List<_PendingOutbound>.from(_pending);
+    if (!_messagesSnapReady && docs.isEmpty && pending.isEmpty) {
+      return const Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF25D366)),
+        ),
+      );
+    }
+    if (_messagesSnapReady && docs.isEmpty && pending.isEmpty) {
+      return const Center(
+        child: Text('No messages yet', style: TextStyle(color: Color(0xFF667781))),
+      );
+    }
+
+    final q = _searchQuery.toLowerCase();
+    final searching = _searchOpen && q.isNotEmpty;
+    final total = docs.length + pending.length;
+
+    return Column(
+      children: [
+        _windowBanner(),
+        Expanded(
+          child: ListView.builder(
+            controller: _scrollController,
+            reverse: true,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            cacheExtent: 4000,
+            addAutomaticKeepAlives: true,
+            itemCount: total,
+            itemBuilder: (context, index) {
+              if (index < pending.length) {
+                return _pendingBubble(pending[pending.length - 1 - index]);
+              }
+              final docIndex = index - pending.length;
+              final msg = docs[docIndex];
+              final data = msg.data;
+              final msgId = msg.id;
+              final selected = _selectedIds.contains(msgId);
+              final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
+              final older = docIndex + 1 < docs.length ? docs[docIndex + 1].data : null;
+              final newer = docIndex > 0 ? docs[docIndex - 1].data : null;
+              final showDateSeparator = older == null ||
+                  !_isSameDay(timestamp, (older['timestamp'] as Timestamp?)?.toDate());
+              final isOutbound = data['direction'] == 'outbound';
+              final isFirstInGroup = older == null ||
+                  showDateSeparator ||
+                  (older['direction'] == 'outbound') != isOutbound;
+              final isLastInGroup = newer == null ||
+                  (newer['direction'] == 'outbound') != isOutbound;
+              final reaction = (data['reaction'] ?? data['localReaction'] ?? data['customerReaction']) as String?;
+              final matches = !searching || _messageMatchesSearch(data, q);
+              final replyPreview = (data['replyPreview'] as String?)?.trim();
+              final status = data['status'] as String?;
+              final retryPayload = data['retryPayload'] is Map
+                  ? Map<String, dynamic>.from(data['retryPayload'] as Map)
+                  : null;
+
+              return Opacity(
+                opacity: searching && !matches ? 0.28 : 1,
+                child: Column(
+                  children: [
+                    if (showDateSeparator && timestamp != null) _DateSeparator(date: timestamp),
+                    if (_firstUnreadId == msgId && _initialUnreadCount > 0)
+                      _UnreadMessagesChip(count: _initialUnreadCount),
+                    GestureDetector(
+                      onLongPress: () => _startMessageSelect(
+                        msgId,
+                        direction: data['direction'] as String?,
+                      ),
+                      onTap: _selecting
+                          ? () => _toggleMessageSelect(
+                                msgId,
+                                direction: data['direction'] as String?,
+                              )
+                          : null,
+                      child: ColoredBox(
+                        color: selected
+                            ? const Color(0xFFD9FDD3).withValues(alpha: 0.55)
+                            : (searching && matches
+                                ? const Color(0xFFFFF59D).withValues(alpha: 0.35)
+                                : Colors.transparent),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Padding(
+                              padding: EdgeInsets.only(
+                                bottom: (reaction != null && reaction.isNotEmpty) ? 12 : 0,
+                              ),
+                              child: _MessageBubble(
+                                key: ValueKey(msgId),
+                                text: data['text'] as String? ?? '',
+                                imageUrl: data['imageUrl'] is String
+                                    ? data['imageUrl'] as String
+                                    : data['image_url'] as String?,
+                                mediaUrl: data['mediaUrl'] as String?,
+                                documentUrl: data['documentUrl'] as String?,
+                                filename: data['filename'] as String?,
+                                type: data['type'] as String? ?? 'text',
+                                isOutbound: isOutbound,
+                                status: status,
+                                timestamp: timestamp,
+                                durationMs: (data['durationMs'] as num?)?.toInt(),
+                                showTail: isFirstInGroup,
+                                marginTop: isFirstInGroup ? _WaMetrics.senderGap : _WaMetrics.groupGap,
+                                marginBottom: isLastInGroup ? _WaMetrics.groupGap : _WaMetrics.groupGap,
+                                photoUrl: isOutbound ? _selfPhotoUrl : null,
+                                letter: isOutbound
+                                    ? _selfLetter
+                                    : (widget.contactName.trim().isNotEmpty
+                                        ? widget.contactName.trim()[0].toUpperCase()
+                                        : '?'),
+                                contactName: widget.contactName,
+                                tenantId: widget.tenantId,
+                                phone: widget.phone,
+                                waMessageId: data['waMessageId'] as String?,
+                                reaction: reaction,
+                                starred: data['starred'] == true,
+                                replyPreview: replyPreview,
+                                messageDocId: msgId,
+                                retryPayload: retryPayload,
+                                onRetry: isOutbound && status == 'failed'
+                                    ? () => _retryFailed(data)
+                                    : null,
+                                location: data['location'] is Map
+                                    ? Map<String, dynamic>.from(data['location'] as Map)
+                                    : null,
+                                contacts: data['contacts'] as List<dynamic>?,
+                                referral: data['referral'] is Map
+                                    ? Map<String, dynamic>.from(data['referral'] as Map)
+                                    : null,
+                              ),
+                            ),
+                            if (reaction != null && reaction.isNotEmpty)
+                              Positioned(
+                                bottom: 0,
+                                left: isOutbound ? null : 18,
+                                right: isOutbound ? 18 : null,
+                                child: Material(
+                                  elevation: 1.5,
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: const Color(0xFFE9EDEF)),
+                                    ),
+                                    child: Text(reaction, style: const TextStyle(fontSize: 13, height: 1.15)),
+                                  ),
+                                ),
+                              ),
+                            if (data['starred'] == true)
+                              Positioned(
+                                top: 8,
+                                left: isOutbound ? null : 12,
+                                right: isOutbound ? 12 : null,
+                                child: const Icon(Icons.star_rounded, size: 14, color: Color(0xFFF59E0B)),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
   }
 
   Map<String, dynamic> _retryPayloadFor(Map<String, dynamic> data) {
@@ -891,6 +1154,14 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       _unreadCaptured = true;
       _chatService.markRead(tenantId: widget.tenantId, phone: widget.phone);
     });
+    final cached = ConversationMessageCache.peek(widget.tenantId, widget.phone);
+    if (cached != null) {
+      _latestDocs = List<ConversationMessage>.from(cached);
+      if (ConversationMessageCache.isSnapshotReady(widget.tenantId, widget.phone)) {
+        _messagesSnapReady = true;
+      }
+    }
+    _messagesSub = _chatService.watchMessages(widget.tenantId, widget.phone).listen(_onMessagesSnapshot);
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
       FirebaseFirestore.instance.collection('users').doc(uid).get().then((snap) {
@@ -908,6 +1179,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   void dispose() {
     _contactSub?.cancel();
+    _messagesSub?.cancel();
     _holdTicker?.cancel();
     _searchController.dispose();
     _textController.dispose();
@@ -940,7 +1212,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     DateTime? last = _lastCustomerMessageAt;
     if (last == null) {
       for (final doc in _latestDocs) {
-        final data = doc.data();
+        final data = doc.data;
         if (data['direction'] != 'inbound') continue;
         final ts = (data['timestamp'] as Timestamp?)?.toDate();
         if (ts == null) continue;
@@ -1050,7 +1322,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   }
 
   Future<void> _send() async {
-    if (_isSending) return;
     if (_sendBlockedByBilling()) return;
     final text = _textController.text.trim();
     if (text.isEmpty) return;
@@ -1058,8 +1329,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
     _textController.clear();
     final replyWaId = (_replyTo?['waMessageId'] as String?)?.trim();
+    final clientMessageId = 'c${DateTime.now().microsecondsSinceEpoch}';
     final pending = _PendingOutbound(
-      id: 'p${DateTime.now().microsecondsSinceEpoch}',
+      id: clientMessageId,
+      clientMessageId: clientMessageId,
       type: 'text',
       text: text,
       at: DateTime.now(),
@@ -1068,7 +1341,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     setState(() {
       _pending.add(pending);
       _replyTo = null;
-      _isSending = true;
     });
     WidgetsBinding.instance.addPostFrameCallback(_scrollToEnd);
 
@@ -1078,16 +1350,51 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         to: widget.phone,
         text: text,
         replyToMessageId: (replyWaId != null && replyWaId.isNotEmpty) ? replyWaId : null,
+        clientMessageId: clientMessageId,
       );
+      if (mounted) {
+        setState(() => pending.sendStatus = 'sent');
+      }
       unawaited(_onOutboundSent());
     } catch (e) {
       if (mounted) {
-        setState(() => _pending.removeWhere((p) => p.id == pending.id));
+        setState(() {
+          pending.sendStatus = 'failed';
+          pending.retryPayload = {
+            'to': widget.phone,
+            'text': text,
+            'clientMessageId': clientMessageId,
+            if (replyWaId != null && replyWaId.isNotEmpty) 'replyToMessageId': replyWaId,
+          };
+        });
         final message = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
-    } finally {
-      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  Future<void> _retryPending(_PendingOutbound pending) async {
+    final payload = pending.retryPayload;
+    if (payload == null) return;
+    if (_sendBlockedByBilling()) return;
+    if (_sendBlockedBy24hWindow()) return;
+
+    setState(() => pending.sendStatus = null);
+    try {
+      await _chatService.retryFailedMessage(
+        tenantId: widget.tenantId,
+        retryPayload: payload,
+      );
+      if (mounted) {
+        setState(() => pending.sendStatus = 'sent');
+      }
+      unawaited(_onOutboundSent());
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => pending.sendStatus = 'failed');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
     }
   }
 
@@ -1101,14 +1408,24 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     return _scrollController.offset < 72;
   }
 
-  void _prunePending(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+  void _prunePending(List<ConversationMessage> docs) {
     if (_pending.isEmpty) return;
     final matchedDocIds = <String>{};
     _pending.removeWhere((p) {
       for (final d in docs) {
         if (matchedDocIds.contains(d.id)) continue;
-        final data = d.data();
+        final data = d.data;
         if (data['direction'] != 'outbound') continue;
+
+        final clientId = p.clientMessageId?.trim();
+        if (p.type == 'text' && clientId != null && clientId.isNotEmpty) {
+          if (d.id == clientId || data['clientMessageId'] == clientId) {
+            matchedDocIds.add(d.id);
+            return true;
+          }
+          continue;
+        }
+
         final ts = (data['timestamp'] as Timestamp?)?.toDate();
         if (ts == null) continue;
         if (ts.isBefore(p.at.subtract(const Duration(seconds: 5)))) continue;
@@ -1205,6 +1522,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       localMediaBytes: p.bytes,
       imageUrl: p.remoteUrl,
       isOutbound: true,
+      status: p.sendStatus,
       timestamp: p.at,
       showTail: true,
       marginTop: _WaMetrics.senderGap,
@@ -1215,6 +1533,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       tenantId: widget.tenantId,
       phone: widget.phone,
       replyPreview: p.replyPreview,
+      retryPayload: p.retryPayload,
+      onRetry: p.sendStatus == 'failed' ? () => _retryPending(p) : null,
     );
   }
 
@@ -1719,7 +2039,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         }
         break;
       case 'starred':
-        final starred = _latestDocs.where((d) => d.data()['starred'] == true).toList();
+        final starred = _latestDocs.where((d) => d.data['starred'] == true).toList();
         if (!mounted) return;
         await showModalBottomSheet<void>(
           context: context,
@@ -1738,7 +2058,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                         : ListView.builder(
                             itemCount: starred.length,
                             itemBuilder: (_, i) {
-                              final d = starred[i].data();
+                              final d = starred[i].data;
                               final t = (d['text'] as String?)?.trim().isNotEmpty == true
                                   ? d['text']
                                   : (d['type'] ?? 'Message');
@@ -1840,7 +2160,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                               if (id == null) return;
                               for (final d in _latestDocs) {
                                 if (d.id == id) {
-                                  final t = (d.data()['text'] as String?)?.trim() ?? '';
+                                  final t = (d.data['text'] as String?)?.trim() ?? '';
                                   if (t.isNotEmpty) {
                                     Clipboard.setData(ClipboardData(text: t));
                                     ScaffoldMessenger.of(context).showSnackBar(
@@ -2010,197 +2330,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           Column(
             children: [
               Expanded(
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: _chatService.watchMessages(widget.tenantId, widget.phone),
-              builder: (context, snapshot) {
-                final raw = snapshot.data?.docs ?? const [];
-                final docs = raw.where((d) => d.data()['deleted'] != true).toList();
-                _latestDocs = docs;
-                _messagesSnapReady = true;
-                _prunePending(docs);
-                _maybeSetUnreadSeparator(docs);
-                final pending = List<_PendingOutbound>.from(_pending);
-                if (docs.isEmpty && pending.isEmpty) {
-                  return const Center(
-                    child: Text('No messages yet', style: TextStyle(color: Color(0xFF667781))),
-                  );
-                }
-
-                final q = _searchQuery.toLowerCase();
-                final searching = _searchOpen && q.isNotEmpty;
-                final newestId = pending.isNotEmpty
-                    ? pending.last.id
-                    : (docs.isNotEmpty ? docs.first.id : null);
-                final isNew = newestId != _lastListDocId;
-                _lastListDocId = newestId;
-
-                if (!_didInitialJump && (docs.isNotEmpty || pending.isNotEmpty)) {
-                  _didInitialJump = true;
-                  WidgetsBinding.instance.addPostFrameCallback(_scrollToEnd);
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    Future<void>.delayed(const Duration(milliseconds: 80), () {
-                      if (mounted) _scrollToEnd();
-                    });
-                  });
-                } else if (isNew && !searching && !_searchOpen && !_selecting && _isPinnedToLatest()) {
-                  WidgetsBinding.instance.addPostFrameCallback(_scrollToEnd);
-                }
-
-                final total = docs.length + pending.length;
-
-                return Column(
-                  children: [
-                    _windowBanner(),
-                    Expanded(
-                      child: ListView.builder(
-                  controller: _scrollController,
-                  reverse: true,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  cacheExtent: 4000,
-                  addAutomaticKeepAlives: true,
-                  itemCount: total,
-                  itemBuilder: (context, index) {
-                    if (index < pending.length) {
-                      return _pendingBubble(pending[pending.length - 1 - index]);
-                    }
-                    final docIndex = index - pending.length;
-                    final data = docs[docIndex].data();
-                    final msgId = docs[docIndex].id;
-                    final selected = _selectedIds.contains(msgId);
-                    final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
-                    final older = docIndex + 1 < docs.length ? docs[docIndex + 1].data() : null;
-                    final newer = docIndex > 0 ? docs[docIndex - 1].data() : null;
-                    final showDateSeparator = older == null ||
-                        !_isSameDay(timestamp, (older['timestamp'] as Timestamp?)?.toDate());
-                    final isOutbound = data['direction'] == 'outbound';
-                    final isFirstInGroup = older == null ||
-                        showDateSeparator ||
-                        (older['direction'] == 'outbound') != isOutbound;
-                    final isLastInGroup = newer == null ||
-                        (newer['direction'] == 'outbound') != isOutbound;
-                    final reaction = (data['reaction'] ?? data['localReaction'] ?? data['customerReaction']) as String?;
-                    final matches = !searching || _messageMatchesSearch(data, q);
-                    final replyPreview = (data['replyPreview'] as String?)?.trim();
-                    final status = data['status'] as String?;
-                    final retryPayload = data['retryPayload'] is Map
-                        ? Map<String, dynamic>.from(data['retryPayload'] as Map)
-                        : null;
-
-                    return Opacity(
-                      opacity: searching && !matches ? 0.28 : 1,
-                      child: Column(
-                      children: [
-                        if (showDateSeparator && timestamp != null) _DateSeparator(date: timestamp),
-                        if (_firstUnreadId == msgId && _initialUnreadCount > 0)
-                          _UnreadMessagesChip(count: _initialUnreadCount),
-                        GestureDetector(
-                          onLongPress: () => _startMessageSelect(
-                            msgId,
-                            direction: data['direction'] as String?,
-                          ),
-                          onTap: _selecting
-                              ? () => _toggleMessageSelect(
-                                    msgId,
-                                    direction: data['direction'] as String?,
-                                  )
-                              : null,
-                          child: ColoredBox(
-                            color: selected
-                                ? const Color(0xFFD9FDD3).withValues(alpha: 0.55)
-                                : (searching && matches
-                                    ? const Color(0xFFFFF59D).withValues(alpha: 0.35)
-                                    : Colors.transparent),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Padding(
-                                  padding: EdgeInsets.only(
-                                    bottom: (reaction != null && reaction.isNotEmpty) ? 12 : 0,
-                                  ),
-                                  child: _MessageBubble(
-                                  key: ValueKey(msgId),
-                                  text: data['text'] as String? ?? '',
-                                  imageUrl: data['imageUrl'] is String
-                                      ? data['imageUrl'] as String
-                                      : data['image_url'] as String?,
-                                  mediaUrl: data['mediaUrl'] as String?,
-                                  documentUrl: data['documentUrl'] as String?,
-                                  filename: data['filename'] as String?,
-                                  type: data['type'] as String? ?? 'text',
-                                  isOutbound: isOutbound,
-                                  status: status,
-                                  timestamp: timestamp,
-                                  durationMs: (data['durationMs'] as num?)?.toInt(),
-                                  showTail: isFirstInGroup,
-                                  marginTop: isFirstInGroup ? _WaMetrics.senderGap : _WaMetrics.groupGap,
-                                  marginBottom: isLastInGroup ? _WaMetrics.groupGap : _WaMetrics.groupGap,
-                                  photoUrl: isOutbound ? _selfPhotoUrl : null,
-                                  letter: isOutbound
-                                      ? _selfLetter
-                                      : (widget.contactName.trim().isNotEmpty
-                                          ? widget.contactName.trim()[0].toUpperCase()
-                                          : '?'),
-                                  contactName: widget.contactName,
-                                  tenantId: widget.tenantId,
-                                  phone: widget.phone,
-                                  waMessageId: data['waMessageId'] as String?,
-                                  reaction: reaction,
-                                  starred: data['starred'] == true,
-                                  replyPreview: replyPreview,
-                                  messageDocId: msgId,
-                                  retryPayload: retryPayload,
-                                  onRetry: isOutbound && status == 'failed'
-                                      ? () => _retryFailed(data)
-                                      : null,
-                                  location: data['location'] is Map
-                                      ? Map<String, dynamic>.from(data['location'] as Map)
-                                      : null,
-                                  contacts: data['contacts'] as List<dynamic>?,
-                                  referral: data['referral'] is Map
-                                      ? Map<String, dynamic>.from(data['referral'] as Map)
-                                      : null,
-                                ),
-                                ),
-                                if (reaction != null && reaction.isNotEmpty)
-                                  Positioned(
-                                    bottom: 0,
-                                    left: isOutbound ? null : 18,
-                                    right: isOutbound ? 18 : null,
-                                    child: Material(
-                                      elevation: 1.5,
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(10),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(10),
-                                          border: Border.all(color: const Color(0xFFE9EDEF)),
-                                        ),
-                                        child: Text(reaction, style: const TextStyle(fontSize: 13, height: 1.15)),
-                                      ),
-                                    ),
-                                  ),
-                                if (data['starred'] == true)
-                                  Positioned(
-                                    top: 8,
-                                    left: isOutbound ? null : 12,
-                                    right: isOutbound ? 12 : null,
-                                    child: const Icon(Icons.star_rounded, size: 14, color: Color(0xFFF59E0B)),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    );
-                  },
-                ),
-                    ),
-                  ],
-                );
-                  },
-                ),
+                child: _buildMessagesBody(),
               ),
               _isRecording && _micLocked && _recordPath != null
                   ? VoiceRecordPanel(
